@@ -31,11 +31,13 @@ const GlobalStyle = () => (
 );
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const TECHS = [
+const DEFAULT_TECHS = [
   "Alex Rivera","Brandon Cole","Casey Nguyen","Dana Torres",
   "Eli Santos","Fiona Park","Gabe Morales","Hailey Kim",
   "Ivan Cruz","Jess Webb","Kyle Hunt","Luna Reyes"
 ];
+function loadTechs() { try { return JSON.parse(localStorage.getItem("pool_techs_v2")||"null") || DEFAULT_TECHS; } catch { return DEFAULT_TECHS; } }
+function saveTechs(t) { try { localStorage.setItem("pool_techs_v2", JSON.stringify(t)); } catch {} }
 const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const FULL_DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const MANAGER_PIN_KEY = "pool_mgr_pin";
@@ -82,11 +84,40 @@ function savePins(p) { try { localStorage.setItem("pool_pins_v2", JSON.stringify
 function loadSettings() { try { return JSON.parse(localStorage.getItem("pool_settings_v2")||"{}"); } catch { return {}; } }
 function saveSettings(s) { try { localStorage.setItem("pool_settings_v2", JSON.stringify(s)); } catch {} }
 
+// ── Logo ──────────────────────────────────────────────────────────────────────
+function Logo({ size = "lg" }) {
+  const big = size === "lg";
+  return (
+    <div style={{ textAlign:"center", lineHeight:1 }}>
+      <div style={{
+        fontFamily:"var(--font-head)", fontWeight:900,
+        fontSize: big ? 13 : 11,
+        letterSpacing: big ? 3 : 2,
+        color:"var(--water)", marginBottom:2
+      }}>GLISTENING WATER</div>
+      <div style={{
+        fontFamily:"var(--font-head)", fontWeight:900,
+        fontSize: big ? 36 : 24,
+        letterSpacing: big ? 4 : 2,
+        color:"var(--text)", lineHeight:1
+      }}>💧 POOL TIME</div>
+      <div style={{
+        fontFamily:"var(--font-head)", fontWeight:600,
+        fontSize: big ? 11 : 9,
+        letterSpacing: big ? 3 : 2,
+        color:"var(--text-dim)", marginTop:3
+      }}>POOL SERVICE · TIME TRACKER</div>
+    </div>
+  );
+}
+
 // ── PIN Pad ───────────────────────────────────────────────────────────────────
-function PinPad({ title, subtitle, onSuccess, onCancel, checkPin, allowSkip = false }) {
+function PinPad({ title, subtitle, onSuccess, onCancel, checkPin, allowSkip = false, resetKey }) {
   const [digits, setDigits] = useState([]);
   const [shake, setShake] = useState(false);
   const [hint, setHint] = useState("");
+
+  useEffect(() => { setDigits([]); setHint(""); setShake(false); }, [resetKey]);
 
   function press(d) {
     if (digits.length >= 4) return;
@@ -100,7 +131,8 @@ function PinPad({ title, subtitle, onSuccess, onCancel, checkPin, allowSkip = fa
         } else {
           setShake(true);
           setHint("Incorrect PIN");
-          setTimeout(() => { setShake(false); setDigits([]); setHint(""); }, 700);
+          setDigits([]);
+          setTimeout(() => { setShake(false); setHint(""); }, 700);
         }
       }, 120);
     }
@@ -114,10 +146,8 @@ function PinPad({ title, subtitle, onSuccess, onCancel, checkPin, allowSkip = fa
       alignItems:"center", justifyContent:"center",
       background:"var(--surface)", padding:24, animation:"fadeIn 0.2s ease"
     }}>
-      <div style={{ fontFamily:"var(--font-head)", fontSize:32, fontWeight:900, letterSpacing:2, marginBottom:6, textAlign:"center" }}>
-        💧 POOL TIME
-      </div>
-      <div style={{ fontFamily:"var(--font-head)", fontSize:20, fontWeight:700, color:"var(--water)", letterSpacing:1, marginBottom:4 }}>{title}</div>
+      <Logo size="lg" />
+      <div style={{ marginTop:16, fontFamily:"var(--font-head)", fontSize:20, fontWeight:700, color:"var(--water)", letterSpacing:1, marginBottom:4 }}>{title}</div>
       {subtitle && <div style={{ color:"var(--text-dim)", fontSize:14, marginBottom:28, textAlign:"center" }}>{subtitle}</div>}
 
       {/* Dots */}
@@ -179,6 +209,7 @@ function SetPinFlow({ title, onSet, onCancel }) {
       onSuccess={(pin) => { setFirst(pin); setStep("confirm"); }}
       onCancel={onCancel}
       checkPin={() => true}
+      resetKey="set"
     />
   );
 
@@ -191,6 +222,7 @@ function SetPinFlow({ title, onSet, onCancel }) {
       }}
       onCancel={() => setStep("set")}
       checkPin={(pin) => pin === first}
+      resetKey="confirm"
     />
   );
 }
@@ -291,6 +323,8 @@ export default function App() {
   const [data, setData] = useState(loadData);
   const [pins, setPins] = useState(loadPins);
   const [settings, setSettings] = useState(() => ({ sampleRate: 60000, ...loadSettings() }));
+  const [techs, setTechs] = useState(loadTechs);
+  const persistTechs = (next) => { setTechs(next); saveTechs(next); };
   const [now, setNow] = useState(Date.now());
   const [pendingTech, setPendingTech] = useState(null);
   const [livePositions, setLivePositions] = useState({});
@@ -305,7 +339,7 @@ export default function App() {
 
   // Tech colors map
   const techColors = {};
-  TECHS.forEach((t,i) => techColors[t] = TECH_COLORS[i % TECH_COLORS.length]);
+  techs.forEach((t,i) => techColors[t] = TECH_COLORS[i % TECH_COLORS.length]);
 
   // ── GPS ───────────────────────────────────────────────────────────────────
   function startGPS(tech) {
@@ -507,6 +541,7 @@ export default function App() {
     onBack={()=>setScreen("home")}
     onSampleRate={(v)=>persistSettings({...settings,sampleRate:v})}
     onChangeManagerPin={(pin)=>{ const n={...pins,"__manager__":pin}; persistPins(n); }}
+    techs={techs} onUpdateTechs={persistTechs}
   /></>;
 
   if (screen==="tech" && selectedTech) return <><GlobalStyle/><TechView
@@ -525,7 +560,7 @@ export default function App() {
   /></>;
 
   return <><GlobalStyle/><HomeView
-    techs={TECHS} data={data} now={now}
+    techs={techs} data={data} now={now}
     isClockedIn={isClockedIn} techColors={techColors}
     onSelect={handleTechSelect}
     onManager={()=>setScreen("pin_manager")}
@@ -540,8 +575,8 @@ function HomeView({ techs, data, now, isClockedIn, techColors, onSelect, onManag
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column"}}>
       <div style={{background:"var(--surface2)",borderBottom:"2px solid var(--water)",padding:"16px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <div>
-          <div style={{fontFamily:"var(--font-head)",fontSize:28,fontWeight:900,letterSpacing:1,lineHeight:1}}>💧 POOL TIME</div>
-          <div style={{color:"var(--text-dim)",fontSize:13,marginTop:2}}>{new Date().toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>
+          <Logo size="sm" />
+          <div style={{color:"var(--text-dim)",fontSize:13,marginTop:4}}>{new Date().toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>
         </div>
         <button onClick={onManager} style={{background:"var(--surface3)",color:"var(--text-dim)",padding:"8px 16px",borderRadius:8,fontSize:13,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:1}}>MANAGER ▸</button>
       </div>
@@ -798,20 +833,22 @@ function TechView({ tech, data, now, isClockedIn, liveMs, weekTotalMs, livePos, 
 }
 
 // ── MANAGER VIEW ──────────────────────────────────────────────────────────────
-function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafletReady, settings, pins, persistPins, managerPin, onUnlock, onBack, onSampleRate, onChangeManagerPin }) {
+function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafletReady, settings, pins, persistPins, managerPin, onUnlock, onBack, onSampleRate, onChangeManagerPin, techs, onUpdateTechs }) {
   const wk=getWeekKey();
   const [selectedWk,setSelectedWk]=useState(wk);
   const [expandedTech,setExpandedTech]=useState(null);
-  const [tab,setTab]=useState("list"); // list | map
+  const [tab,setTab]=useState("list");
   const [playback,setPlayback]=useState({tech:null,day:null});
   const [showPinMgr,setShowPinMgr]=useState(false);
   const [showChangeMgrPin,setShowChangeMgrPin]=useState(false);
   const [resetTech,setResetTech]=useState(null);
+  const [showRoster,setShowRoster]=useState(false);
+  const [newTechName,setNewTechName]=useState("");
 
   const weeks=[...new Set(Object.keys(data))].sort().reverse();
   if (!weeks.includes(wk)) weeks.unshift(wk);
   const weekData=data[selectedWk]||{};
-  const allTechs=TECHS;
+  const allTechs=techs;
 
   const submitted=allTechs.filter(t=>weekData[t]?.submitted);
   const pending=allTechs.filter(t=>!weekData[t]?.submitted&&Object.keys(weekData[t]?.days||{}).length>0);
@@ -879,16 +916,54 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
           ))}
         </div>
         <div style={{marginLeft:"auto",display:"flex",gap:8}}>
-          <button onClick={()=>setShowPinMgr(s=>!s)} style={{padding:"4px 12px",borderRadius:6,fontSize:12,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:1,background:"var(--surface3)",color:"var(--text-dim)"}}>🔐 PINs</button>
+          <button onClick={()=>{setShowRoster(s=>!s);setShowPinMgr(false);}} style={{padding:"4px 12px",borderRadius:6,fontSize:12,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:1,background:"var(--surface3)",color:"var(--text-dim)"}}>👷 ROSTER</button>
+          <button onClick={()=>{setShowPinMgr(s=>!s);setShowRoster(false);}} style={{padding:"4px 12px",borderRadius:6,fontSize:12,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:1,background:"var(--surface3)",color:"var(--text-dim)"}}>🔐 PINs</button>
         </div>
       </div>
+
+      {/* Roster panel */}
+      {showRoster && (
+        <div style={{background:"#1e293bcc",borderBottom:"1px solid var(--border)",padding:"12px 16px",animation:"slideUp 0.2s ease"}}>
+          <div style={{fontSize:11,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:2,color:"var(--text-dim)",marginBottom:10}}>ROSTER MANAGEMENT</div>
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <input
+              value={newTechName}
+              onChange={e=>setNewTechName(e.target.value)}
+              onKeyDown={e=>{
+                if(e.key==="Enter"&&newTechName.trim()&&!techs.includes(newTechName.trim())){
+                  onUpdateTechs([...techs,newTechName.trim()]);
+                  setNewTechName("");
+                }
+              }}
+              placeholder="First Last"
+              style={{flex:1,padding:"8px 12px",borderRadius:8,background:"var(--surface3)",border:"1px solid var(--border)",color:"var(--text)",fontFamily:"var(--font-body)",fontSize:14,outline:"none"}}
+            />
+            <button onClick={()=>{
+              const name=newTechName.trim();
+              if(name&&!techs.includes(name)){onUpdateTechs([...techs,name]);setNewTechName("");}
+            }} style={{padding:"8px 14px",borderRadius:8,background:"var(--water)",color:"#fff",fontFamily:"var(--font-head)",fontWeight:700,fontSize:13,letterSpacing:1}}>+ ADD</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {techs.map(t=>(
+              <div key={t} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--surface3)",borderRadius:8,padding:"8px 12px"}}>
+                <span style={{fontSize:14,fontWeight:600}}>{t}</span>
+                <button onClick={()=>{
+                  if(window.confirm(`Remove ${t} from roster?`)){
+                    onUpdateTechs(techs.filter(x=>x!==t));
+                  }
+                }} style={{background:"#ef444422",color:"var(--red)",border:"1px solid #ef444444",borderRadius:6,padding:"4px 10px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:12}}>REMOVE</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* PIN manager panel */}
       {showPinMgr && (
         <div style={{background:"#1e293bcc",borderBottom:"1px solid var(--border)",padding:"12px 16px",animation:"slideUp 0.2s ease"}}>
           <div style={{fontSize:11,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:2,color:"var(--text-dim)",marginBottom:10}}>PIN MANAGEMENT</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:10}}>
-            {TECHS.map(t=>(
+            {techs.map(t=>(
               <button key={t} onClick={()=>setResetTech(t)} style={{
                 padding:"5px 12px",borderRadius:6,fontSize:12,
                 background:"var(--surface3)",color:pins[t]?"var(--text)":"var(--amber)",
@@ -954,7 +1029,7 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
             <div style={{fontSize:11,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:2,color:"var(--text-dim)",marginBottom:8}}>ROUTE PLAYBACK</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <button onClick={()=>setPlayback({tech:null,day:null})} style={{padding:"5px 12px",borderRadius:6,fontSize:12,fontFamily:"var(--font-head)",fontWeight:700,background:!playback.tech?"var(--water)":"var(--surface3)",color:!playback.tech?"#fff":"var(--text-dim)"}}>ALL LIVE</button>
-              {TECHS.filter(t=>Object.values(data[selectedWk]?.[t]?.days||{}).some(d=>d.gps?.length>0)).map(t=>(
+              {techs.filter(t=>Object.values(data[selectedWk]?.[t]?.days||{}).some(d=>d.gps?.length>0)).map(t=>(
                 <button key={t} onClick={()=>setPlayback({tech:t,day:todayIndex()})} style={{
                   padding:"5px 12px",borderRadius:6,fontSize:12,fontFamily:"var(--font-head)",fontWeight:700,
                   background:playback.tech===t?techColors[t]:"var(--surface3)",
