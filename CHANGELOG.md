@@ -1,98 +1,235 @@
-# Changelog — Pool Time Tracker
-
-All notable changes to this project are documented here.
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+# Pool Time Tracker — Changelog
 
 ---
 
-## [1.2] — Supabase Live Map — 2026-03-19
+## [1.8] — 2026-03-14 — Deployment Guide
 
-### Added
-- **`supabase/schema.sql`** — Full database schema for Supabase (Postgres):
-  - `technicians` table — roster of field techs (PINs remain localStorage only)
-  - `sessions` table — clock-in/out records with computed `duration_secs` column
-  - `gps_points` table — one row per GPS ping, indexed by session and technician
-  - `live_positions` view — latest GPS point per active session, used by the manager map
-  - Row Level Security (RLS) policies — anon read/insert for app clients
-  - Supabase Realtime enabled on `gps_points` and `sessions` tables
-- **`src/lib/supabase.js`** — Supabase client + all DB helper functions:
-  - `getTechnicians()` / `getTechnicianByName()`
-  - `clockIn(technicianId)` / `clockOut(sessionId)` / `getActiveSession()`
-  - `getHoursToday(technicianId)` — total hours worked today, handles active sessions
-  - `recordGpsPoint({...})` — called every 60 s by the tracking interval
-  - `getRouteForSession(sessionId)` — ordered GPS points for route drawing
-  - `getLivePositions()` — reads `live_positions` view for manager map
-  - `subscribeToLivePositions(onUpdate)` — Realtime subscription, returns unsubscribe fn
-  - `getSessionsForExport(from, to)` + `downloadCsv(rows)` — CSV export helpers
-- **`src/LiveMap.jsx`** — Manager live map component:
-  - Dark CartoDB tile layer matching app theme
-  - Animated SVG pulse markers for each clocked-in technician
-  - Left sidebar showing all active techs with hours worked + last seen timestamp
-  - Popup on marker tap: name, status, clock-in time, hours today, last seen, current address
-  - "Show Route" button in popup draws the tech's full GPS route as a dashed polyline
-  - Route info panel (bottom-right) shows point count, time range, and last known address
-  - Supabase Realtime subscription — map updates instantly on new GPS insert or clock-out
-  - Loading, error, and empty states handled gracefully
-  - "Updated X ago" timestamp bottom-left of map
+**Output:** `DEPLOY.md`
 
-### Architecture — Hybrid Model
-- **PINs:** localStorage only (unchanged)
-- **Sessions + GPS:** Supabase (shared across devices)
-- Avoids a full rewrite while enabling true real-time multi-device visibility
-
-### Environment Variables Required
-```
-VITE_SUPABASE_URL=https://xxxx.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJ...
-```
-
-### Integration Notes
-```bash
-npm install @supabase/supabase-js
-```
-```jsx
-// Router
-import LiveMap from './LiveMap';
-<Route path="/manager/map" element={<LiveMap />} />
-
-// Replace localStorage clock-in with:
-import { clockIn, recordGpsPoint, clockOut } from './lib/supabase';
-```
-
-### Files Changed
-| File | Change |
-|---|---|
-| `supabase/schema.sql` | New — run once in Supabase SQL Editor |
-| `src/lib/supabase.js` | New — Supabase client + all helper functions |
-| `src/LiveMap.jsx` | New — manager live map component |
-| `CHANGELOG.md` | Updated |
+### ✅ Added
+- Step-by-step guide: Supabase → GitHub → GitHub Pages → PWA install
+- Schema run instructions with Supabase SQL Editor walkthrough
+- Realtime table toggle instructions (Supabase Replication tab)
+- Credential setup: env vars (Option A) vs in-app config screen (Option B)
+- GitHub repo creation and `git push` commands
+- `vite.config.js` base path configuration notes
+- `npm run deploy` single-command deployment
+- GitHub Pages activation steps
+- PWA install instructions for iPhone (Safari) and Android (Chrome)
+- First-launch checklist (6 items)
+- Troubleshooting table covering 7 common issues
+- Security notes on PINs, GPS data, and RLS hardening
 
 ---
 
-## [1.1] — Help Screen — 2026-03-18
+## [1.7] — 2026-03-14 — PWA
 
-### Added
-- **In-app Help Screen** (`src/HelpScreen.jsx`) — tabbed React component covering all 7 features
-- Technician Tab: PWA install, PIN setup, clock in/out, GPS tracking, offline mode
-- Manager Tab: dashboard, live map, CSV export, PIN management, offline behaviour
-- Quick Reference Cards, collapsible accordion sections, tip/info callout boxes
-- Dark theme; Syne + DM Sans fonts
+**Outputs:** `public/manifest.json`, `public/service-worker.js`, `index.html`
 
----
-
-## [1.0] — Initial Release
-
-### Added
-- PWA scaffold (Vite + React 18)
-- 4-digit PIN authentication (localStorage)
-- Clock in / clock out with session timer
-- GPS route tracking via Leaflet
-- Manager dashboard
-- CSV export
-- Offline support via service worker
-- GitHub Actions → GitHub Pages deploy pipeline
-- `public/manifest.json` + `public/service-worker.js`
+### ✅ Added
+- `manifest.json` — app name, short name, theme color `#38bdf8`, display `standalone`, portrait lock, icon references
+- `service-worker.js` — full offline strategy:
+  - Install: caches core shell assets
+  - Activate: clears stale caches, claims all clients
+  - Fetch: network-first for Supabase API, cache-first for CDN and app shell
+  - SPA fallback: unmatched routes return `/index.html`
+- Background sync via `sync` event — posts `SYNC_REQUEST` to all open clients
+- Push notification handler scaffolded for future use
+- `index.html` registers SW on `load`, re-dispatches SW messages as `pool_sync_request` window events
+- iOS meta tags: `apple-mobile-web-app-capable` and `apple-mobile-web-app-status-bar-style`
+- Supabase JS loaded via CDN `<script>` tag before app bundle
 
 ---
 
-*Versioning follows feature milestones.*
+## [1.6] — 2026-03-14 — SQL Schema
+
+**Output:** `schema.sql`
+
+### ✅ Added
+- `time_entries` — one row per clock-in/out pair, `UNIQUE (tech, week_key, day_index, entry_in)` prevents dupes from retry logic
+- `gps_points` — every GPS sample: lat, lng, accuracy, timestamp
+- `week_submissions` — one row per tech per week, includes `unlocked_at`
+- `day_flags` — flagged days per tech per week
+- Performance indexes on `(tech, week_key)` across all tables
+- `set_updated_at()` trigger on `time_entries` and `day_flags`
+- Row Level Security enabled on all tables with open anon policies (ready to harden)
+- `ALTER PUBLICATION supabase_realtime` for three tables
+- GPS note: broadcast only, no table replication, avoids DB load from high-frequency writes
+
+---
+
+## [1.5] — 2026-03-14 — Full Clean Rewrite + Supabase Backend
+
+**Output:** Complete `src/` project (13 files)
+
+### ✅ Architecture
+```
+src/
+  App.jsx                    # Root — routing, state, all actions
+  supabase.js                # Lazy client, config helpers, isConfigured()
+  utils.js                   # Constants, date/format helpers, hexAlpha()
+  main.jsx                   # React entry point
+  hooks/
+    useRealtimeSync.js       # Supabase reads, writes, real-time subscriptions
+    useGPS.js                # GPS timers, adjustable rate, per-tech tracking
+    useOfflineQueue.js       # Queue, flush on reconnect
+  components/
+    ui.jsx                   # GlobalStyle + all shared primitives
+    MapView.jsx              # Leaflet map — routes and live pins
+  screens/
+    ConfigScreen.jsx         # First-time Supabase setup
+    PinScreen.jsx            # Verify / Set PIN pad
+    HomeScreen.jsx           # Tech roster
+    TechScreen.jsx           # Clock in/out, map, week grid, submit
+    ManagerScreen.jsx        # Dashboard, live map, PIN mgmt, CSV
+```
+
+### ✅ Supabase
+- Loads last 4 weeks on mount
+- Real-time `postgres_changes` subscriptions on 3 tables
+- Broadcast channel for live GPS (ephemeral — no DB write overhead)
+- GPS history persisted to `gps_points` on every sample
+- `upsert` with conflict keys for idempotent offline retries
+- PINs intentionally local-only, never synced to Supabase
+
+### ✅ Offline
+- `useOfflineQueue` serializes actions to localStorage on failure
+- Flush triggered by `navigator.onLine` change and SW `sync` event
+- Offline banner with queued action count shown on all screens
+
+### ✅ GPS
+- `useGPS` hook — per-tech interval timers, immediate capture on clock-in
+- `updateRate()` restarts all active timers instantly
+- Rate persisted to localStorage across reloads
+- `window` custom event `pool_gps_rate` bridges manager rate picker to hook
+
+### ✅ PIN security
+- Tap keypad — no keyboard
+- Set mode: two-step confirm, re-entry required
+- Shake + clear animation on wrong PIN
+- Auto-lock 300ms after every clock in/out and submit
+- Manager PIN defaults to `1234`
+- Pins stored in `pool_pins` localStorage key only
+
+### ✅ Design
+- Font pairing: **Syne 800** (headers) + **DM Sans** (body)
+- Ink dark palette: `#0d1117 / #161b22 / #21262d`
+- Per-tech accent colors applied to: roster avatar, week grid bars, clock button border, map pin, top bar accent
+- `100svh` prevents iOS browser chrome overlap
+- Composable primitives: `Screen`, `TopBar`, `Card`, `Avatar`, `Badge`, `LiveDot`, `PrimaryBtn`
+
+### ✅ Build
+- Vite 5 + `@vitejs/plugin-react`
+- `base: "/pool-time/"` pre-set for GitHub Pages
+- `npm run deploy` via `gh-pages` package
+- React vendor chunk split for better cache performance
+
+---
+
+## [1.4] — 2026-03-14 — PIN Security *(superseded by 1.5)*
+## [1.3] — 2026-03-14 — GPS Tracking *(superseded by 1.5)*
+## [1.1] — 2026-03-14 — Initial Release *(superseded by 1.5)*
+
+---
+
+## [1.15] — 2026-03-20 — Overtime Report
+
+**Output:** `src/screens/OvertimeScreen.jsx`
+
+### ✅ Added
+- Full overtime report screen accessible from Manager dashboard (⏱ OT button)
+- Summary bar: total hours, total OT hours, number of techs in OT
+- Per-tech rows with weekly total and OT badge (amber = over, green = on track)
+- Daily OT breakdown per tech — flags any day over 8h with exact overage
+- Week selector dropdown — view any historical week in `appData`
+- Threshold constants at top of file: 40h/week, 8h/day (easy to adjust)
+- Sorted by OT hours descending so worst offenders appear first
+
+---
+
+## [1.14] — 2026-03-20 — Admin Screen (Dynamic Techs)
+
+**Outputs:** `src/screens/AdminScreen.jsx`, `schema.sql` (techs table), `App.jsx` (dynamic load)
+
+### ✅ Added
+- `techs` Supabase table: `id, name, email, active, created_at`
+- Default 12 techs seeded via `INSERT … ON CONFLICT DO NOTHING` (safe to re-run)
+- `AdminScreen` — add tech (name + optional email), toggle active/inactive, delete with confirmation
+- Active/inactive toggle: inactive techs greyed out, excluded from roster
+- Delete guard: confirms before delete, preserves historical time entries
+- `App.jsx` now loads techs dynamically from Supabase on boot; falls back to hardcoded list if table doesn't exist yet
+- `HomeScreen.jsx` accepts `techs` as prop instead of importing hardcoded constant
+- ⚙ Techs button added to Manager settings bar (purple)
+
+---
+
+## [1.13] — 2026-03-20 — Per-Tech Weekly Email Summary
+
+**Output:** `supabase/functions/weekly-summary/index.ts`
+
+### ✅ Added
+- Supabase Edge Function using Deno + Resend API (free tier: 3,000 emails/month)
+- Each active tech receives a formatted HTML email with their weekly time table and total hours
+- Manager receives a team summary: all techs ranked by hours, submitted status, grand total
+- Scheduled via Supabase Cron: every Monday at 8am UTC
+- Covers the previous week automatically using ISO week key calculation
+- Branded HTML emails matching app dark theme (Glistening Water header, copyright footer)
+- Required env vars: `RESEND_API_KEY`, `MANAGER_EMAIL`, `FROM_EMAIL`
+- Gracefully skips techs with no email or no entries that week
+
+---
+
+## [1.12] — 2026-03-20 — Copyright Footer
+
+**Output:** `src/components/ui.jsx`
+
+### ✅ Added
+- `Footer` component rendered inside `Screen` — appears automatically on every screen
+- Text: © 2026 Glistening Water Pool Services. Created by John Schroeder. All rights reserved.
+- Styled: 10px, muted color, 60% opacity, top border separator, `marginTop: auto` pins it to bottom
+- Zero changes needed to individual screens — single source of truth in `ui.jsx`
+
+---
+
+## [1.11] — 2026-03-20 — Logo + Full Release Package
+
+**Output:** `pool-time-tracker-v1.11.zip` (64 KB)
+
+### ✅ Added
+- `public/logo.jpg` — Glistening Water Pool Services logo bundled into app
+- `HomeScreen.jsx` — top bar replaced 💧 text with logo image (height: 36px)
+- `index.html` — browser tab favicon + iOS home screen icon point to logo; title updated
+- `manifest.json` — app name → "Glistening Water Pool Services", short name → "GW Pool", logo added as PWA icon
+- `service-worker.js` — logo added to offline cache
+
+### 📦 Full package contents
+```
+pool-time-tracker-v1.11.zip
+├── src/
+│   ├── App.jsx
+│   ├── main.jsx
+│   ├── supabase.js
+│   ├── utils.js
+│   ├── hooks/  (useRealtimeSync, useGPS, useOfflineQueue)
+│   ├── components/  (ui.jsx, MapView.jsx)
+│   └── screens/
+│       ├── ConfigScreen.jsx
+│       ├── PinScreen.jsx
+│       ├── HomeScreen.jsx
+│       ├── TechScreen.jsx
+│       ├── ManagerScreen.jsx
+│       ├── AdminScreen.jsx
+│       └── OvertimeScreen.jsx
+├── supabase/functions/weekly-summary/index.ts
+├── public/  (manifest.json, service-worker.js, logo.jpg)
+├── schema.sql
+├── index.html
+├── vite.config.js
+├── package.json
+├── DEPLOY.md
+└── CHANGELOG.md
+```
+
+---
+
+*Glistening Water Pool Services · Vite + React + Supabase + GitHub Pages PWA · v1.11*

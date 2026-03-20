@@ -1,139 +1,128 @@
--- ============================================================
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Pool Time Tracker — Supabase Schema
--- Output 1.3 | Run this in Supabase SQL Editor
--- ============================================================
+-- Run this entire file in: Supabase Dashboard → SQL Editor → New Query → Run
+-- ─────────────────────────────────────────────────────────────────────────────
 
--- ------------------------------------------------------------
--- 1. TECHNICIANS
---    Mirrors the localStorage technician list.
---    PINs remain on-device only — not stored here.
--- ------------------------------------------------------------
-create table if not exists public.technicians (
-  id           uuid primary key default gen_random_uuid(),
-  name         text not null,
-  display_name text generated always as (name) stored,
-  is_active    boolean not null default true,
-  created_at   timestamptz not null default now()
+-- ── Time Entries ──────────────────────────────────────────────────────────────
+-- One row per clock-in/clock-out pair per tech per day.
+CREATE TABLE IF NOT EXISTS time_entries (
+  id           BIGSERIAL PRIMARY KEY,
+  tech         TEXT        NOT NULL,
+  week_key     DATE        NOT NULL,          -- Monday of the week (YYYY-MM-DD)
+  day_index    SMALLINT    NOT NULL,          -- 0=Sun … 6=Sat
+  entry_in     TIMESTAMPTZ NOT NULL,
+  entry_out    TIMESTAMPTZ,                   -- NULL while clocked in
+  duration_ms  BIGINT      NOT NULL DEFAULT 0,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (tech, week_key, day_index, entry_in)
 );
 
-comment on table public.technicians is
-  'One row per field technician. PINs are stored locally only, never here.';
-
--- ------------------------------------------------------------
--- 2. SESSIONS
---    Each clock-in creates a session row.
---    clock_out_at is null while the tech is still clocked in.
--- ------------------------------------------------------------
-create table if not exists public.sessions (
-  id              uuid primary key default gen_random_uuid(),
-  technician_id   uuid not null references public.technicians(id) on delete cascade,
-  clock_in_at     timestamptz not null default now(),
-  clock_out_at    timestamptz,
-  duration_secs   integer generated always as (
-                    extract(epoch from (coalesce(clock_out_at, now()) - clock_in_at))::integer
-                  ) stored,
-  created_at      timestamptz not null default now()
+-- ── GPS Points ────────────────────────────────────────────────────────────────
+-- One row per GPS sample captured while a tech is clocked in.
+CREATE TABLE IF NOT EXISTS gps_points (
+  id           BIGSERIAL PRIMARY KEY,
+  tech         TEXT        NOT NULL,
+  week_key     DATE        NOT NULL,
+  day_index    SMALLINT    NOT NULL,
+  lat          DOUBLE PRECISION NOT NULL,
+  lng          DOUBLE PRECISION NOT NULL,
+  accuracy     REAL,                          -- metres
+  captured_at  TIMESTAMPTZ NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-comment on table public.sessions is
-  'Clock-in/out events. duration_secs is computed; clock_out_at null = active session.';
-
-create index if not exists sessions_technician_id_idx on public.sessions(technician_id);
-create index if not exists sessions_clock_in_at_idx   on public.sessions(clock_in_at desc);
-
--- ------------------------------------------------------------
--- 3. GPS_POINTS
---    One row per location ping (every 60 s while clocked in).
--- ------------------------------------------------------------
-create table if not exists public.gps_points (
-  id            uuid primary key default gen_random_uuid(),
-  session_id    uuid not null references public.sessions(id) on delete cascade,
-  technician_id uuid not null references public.technicians(id) on delete cascade,
-  lat           double precision not null,
-  lng           double precision not null,
-  accuracy_m    real,
-  address       text,              -- reverse-geocoded if available
-  recorded_at   timestamptz not null default now()
+-- ── Week Submissions ──────────────────────────────────────────────────────────
+-- One row per tech per week when they hit "Submit Week".
+CREATE TABLE IF NOT EXISTS week_submissions (
+  id           BIGSERIAL PRIMARY KEY,
+  tech         TEXT        NOT NULL,
+  week_key     DATE        NOT NULL,
+  submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  unlocked_at  TIMESTAMPTZ,                   -- set if manager unlocks
+  UNIQUE (tech, week_key)
 );
 
-comment on table public.gps_points is
-  'GPS pings from technicians while clocked in. address is reverse-geocoded on the client.';
+-- ── Day Flags ─────────────────────────────────────────────────────────────────
+-- Tracks whether a tech flagged a specific day for manager review.
+CREATE TABLE IF NOT EXISTS day_flags (
+  id           BIGSERIAL PRIMARY KEY,
+  tech         TEXT        NOT NULL,
+  week_key     DATE        NOT NULL,
+  day_index    SMALLINT    NOT NULL,
+  flagged      BOOLEAN     NOT NULL DEFAULT TRUE,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (tech, week_key, day_index)
+);
 
-create index if not exists gps_points_session_id_idx     on public.gps_points(session_id);
-create index if not exists gps_points_technician_id_idx  on public.gps_points(technician_id);
-create index if not exists gps_points_recorded_at_idx    on public.gps_points(recorded_at desc);
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Indexes — keeps queries fast even with months of data
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_entries_tech_week   ON time_entries  (tech, week_key);
+CREATE INDEX IF NOT EXISTS idx_gps_tech_week       ON gps_points    (tech, week_key);
+CREATE INDEX IF NOT EXISTS idx_submissions_week    ON week_submissions (week_key);
+CREATE INDEX IF NOT EXISTS idx_flags_tech_week     ON day_flags     (tech, week_key);
 
--- ------------------------------------------------------------
--- 4. LIVE_POSITIONS view
---    Manager map queries this — latest GPS point per tech
---    for techs currently clocked in.
--- ------------------------------------------------------------
-create or replace view public.live_positions as
-select distinct on (gp.technician_id)
-  gp.technician_id,
-  t.name                              as technician_name,
-  gp.lat,
-  gp.lng,
-  gp.address                          as current_address,
-  gp.recorded_at                      as last_seen_at,
-  s.id                                as session_id,
-  s.clock_in_at,
-  extract(epoch from (now() - s.clock_in_at))::integer
-                                      as session_duration_secs
-from public.gps_points gp
-join public.technicians t  on t.id  = gp.technician_id
-join public.sessions    s  on s.id  = gp.session_id
-where s.clock_out_at is null          -- only active sessions
-order by gp.technician_id, gp.recorded_at desc;
+-- ─────────────────────────────────────────────────────────────────────────────
+-- auto-update updated_at timestamps
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
+$$;
 
-comment on view public.live_positions is
-  'Latest GPS position for every currently clocked-in technician. Used by manager live map.';
+CREATE OR REPLACE TRIGGER entries_updated_at
+  BEFORE UPDATE ON time_entries
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- ------------------------------------------------------------
--- 5. ROW LEVEL SECURITY
---    Using anon key from the client app (no auth system).
---    Adjust to your security requirements.
--- ------------------------------------------------------------
-alter table public.technicians  enable row level security;
-alter table public.sessions     enable row level security;
-alter table public.gps_points   enable row level security;
+CREATE OR REPLACE TRIGGER flags_updated_at
+  BEFORE UPDATE ON day_flags
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- Allow anon read on all three tables (manager map reads freely)
-create policy "anon_read_technicians"
-  on public.technicians for select to anon using (true);
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Row Level Security (RLS)
+-- The app uses the anon key — keep it simple with open policies for now.
+-- For production hardening, replace these with per-user policies.
+-- ─────────────────────────────────────────────────────────────────────────────
+ALTER TABLE time_entries     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE gps_points       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE week_submissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE day_flags        ENABLE ROW LEVEL SECURITY;
 
-create policy "anon_read_sessions"
-  on public.sessions for select to anon using (true);
+CREATE POLICY "anon_all" ON time_entries     FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon_all" ON gps_points       FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon_all" ON week_submissions FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon_all" ON day_flags        FOR ALL USING (true) WITH CHECK (true);
 
-create policy "anon_read_gps_points"
-  on public.gps_points for select to anon using (true);
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Enable Realtime on all tables
+-- Run these in the Supabase Dashboard → Database → Replication tab too.
+-- ─────────────────────────────────────────────────────────────────────────────
+ALTER PUBLICATION supabase_realtime ADD TABLE time_entries;
+ALTER PUBLICATION supabase_realtime ADD TABLE week_submissions;
+ALTER PUBLICATION supabase_realtime ADD TABLE day_flags;
+-- Note: gps_points realtime is handled via Broadcast channel (ephemeral),
+-- not table replication, to avoid DB load from high-frequency GPS writes.
 
--- Allow anon insert for sessions and gps_points (techs write from app)
-create policy "anon_insert_sessions"
-  on public.sessions for insert to anon with check (true);
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Techs table (Admin screen — add/remove techs without code changes)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS techs (
+  id         BIGSERIAL PRIMARY KEY,
+  name       TEXT        NOT NULL UNIQUE,
+  email      TEXT,                            -- for weekly summary emails
+  active     BOOLEAN     NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-create policy "anon_update_sessions"
-  on public.sessions for update to anon using (true);
+CREATE INDEX IF NOT EXISTS idx_techs_active ON techs (active);
 
-create policy "anon_insert_gps_points"
-  on public.gps_points for insert to anon with check (true);
+ALTER TABLE techs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_all" ON techs FOR ALL USING (true) WITH CHECK (true);
 
--- Technicians table: only managed via Supabase dashboard / service role
--- (no anon insert — add techs manually or via a seeded migration below)
-
--- ------------------------------------------------------------
--- 6. REALTIME
---    Enable Supabase Realtime on gps_points so the manager
---    map updates without polling.
--- ------------------------------------------------------------
-alter publication supabase_realtime add table public.gps_points;
-alter publication supabase_realtime add table public.sessions;
-
--- ------------------------------------------------------------
--- 7. OPTIONAL SEED — remove or edit before running in prod
--- ------------------------------------------------------------
--- insert into public.technicians (name) values
---   ('Alex Johnson'),
---   ('Maria Garcia'),
---   ('James Smith'),
---   ('Lisa Chen');
+-- Seed the default 12 techs (safe to run multiple times — ON CONFLICT DO NOTHING)
+INSERT INTO techs (name) VALUES
+  ('Alex Rivera'), ('Brandon Cole'), ('Casey Nguyen'), ('Dana Torres'),
+  ('Eli Santos'),  ('Fiona Park'),   ('Gabe Morales'), ('Hailey Kim'),
+  ('Ivan Cruz'),   ('Jess Webb'),    ('Kyle Hunt'),    ('Luna Reyes')
+ON CONFLICT (name) DO NOTHING;

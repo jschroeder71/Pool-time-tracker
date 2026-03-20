@@ -1,38 +1,48 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0f172a" />
-    <meta name="description" content="Pool Time Tracker — field time tracking for pool service technicians" />
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#38bdf8" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="GW Pool" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/logo.jpg" />
+  <link rel="icon" type="image/jpeg" href="/logo.jpg" />
+  <title>Glistening Water Pool Services</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d1117; color: #e6edf3; }
+    #root { min-height: 100svh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
 
-    <!-- PWA -->
-    <link rel="manifest" href="./manifest.json" />
-    <link rel="apple-touch-icon" href="./icon-192.png" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Pool Time" />
-    <meta name="mobile-web-app-capable" content="yes" />
+  <!-- Supabase JS (loaded before app bundle) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet" />
+  <!-- App bundle (Vite output) -->
+  <script type="module" src="/src/main.jsx"></script>
 
-    <title>Pool Time Tracker</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="./Src/main.jsx"></script>
-    <script>
-      if ("serviceWorker" in navigator) {
-        window.addEventListener("load", () => {
-          navigator.serviceWorker
-            .register("./service-worker.js")
-            .then((reg) => console.log("SW registered:", reg.scope))
-            .catch((err) => console.warn("SW registration failed:", err));
-        });
-      }
-    </script>
-  </body>
+  <!-- Service Worker registration -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/service-worker.js")
+          .then(reg => {
+            console.log("SW registered:", reg.scope);
+            // Listen for sync requests from SW
+            navigator.serviceWorker.addEventListener("message", (e) => {
+              if (e.data?.type === "SYNC_REQUEST") {
+                window.dispatchEvent(new Event("pool_sync_request"));
+              }
+            });
+          })
+          .catch(err => console.warn("SW failed:", err));
+      });
+    }
+  </script>
+</body>
 </html>
