@@ -1,131 +1,98 @@
 # Changelog — Pool Time Tracker
 
 All notable changes to this project are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [2.0.0] — Current Release
-
-### Summary
-Full rewrite as a clean, single-file React PWA. Consolidated all screens, state, and logic into one optimized component. Improved animation system, GPS reliability, and manager tooling.
+## [1.2] — Supabase Live Map — 2026-03-19
 
 ### Added
-- Complete PWA setup: manifest, service worker, offline caching
-- GitHub Pages deployment via `npm run deploy`
-- Route playback by tech and day in manager map view
-- "All Live" mode on map — shows all clocked-in techs simultaneously
-- Animated PIN dot entry with shake-on-failure feedback
-- SetPinFlow component — confirm step prevents typo lockouts
-- GPS interval control from manager dashboard (30s / 1m / 5m / 10m)
-- GPS timers automatically restart when interval setting changes
-- Overtime warning badge when weekly hours approach 40
-- Week selector in manager view — browse any historical week
-- Summary cards: Submitted / Pending / No Data counts
-- CSV export includes all days, total hours, and submission status
-- Manager can unlock submitted weeks per technician
-- Manager PIN change flow with confirmation step
-- Tech PIN reset from manager dashboard
-- Live position indicator (pulsing green dot) on home screen roster
+- **`supabase/schema.sql`** — Full database schema for Supabase (Postgres):
+  - `technicians` table — roster of field techs (PINs remain localStorage only)
+  - `sessions` table — clock-in/out records with computed `duration_secs` column
+  - `gps_points` table — one row per GPS ping, indexed by session and technician
+  - `live_positions` view — latest GPS point per active session, used by the manager map
+  - Row Level Security (RLS) policies — anon read/insert for app clients
+  - Supabase Realtime enabled on `gps_points` and `sessions` tables
+- **`src/lib/supabase.js`** — Supabase client + all DB helper functions:
+  - `getTechnicians()` / `getTechnicianByName()`
+  - `clockIn(technicianId)` / `clockOut(sessionId)` / `getActiveSession()`
+  - `getHoursToday(technicianId)` — total hours worked today, handles active sessions
+  - `recordGpsPoint({...})` — called every 60 s by the tracking interval
+  - `getRouteForSession(sessionId)` — ordered GPS points for route drawing
+  - `getLivePositions()` — reads `live_positions` view for manager map
+  - `subscribeToLivePositions(onUpdate)` — Realtime subscription, returns unsubscribe fn
+  - `getSessionsForExport(from, to)` + `downloadCsv(rows)` — CSV export helpers
+- **`src/LiveMap.jsx`** — Manager live map component:
+  - Dark CartoDB tile layer matching app theme
+  - Animated SVG pulse markers for each clocked-in technician
+  - Left sidebar showing all active techs with hours worked + last seen timestamp
+  - Popup on marker tap: name, status, clock-in time, hours today, last seen, current address
+  - "Show Route" button in popup draws the tech's full GPS route as a dashed polyline
+  - Route info panel (bottom-right) shows point count, time range, and last known address
+  - Supabase Realtime subscription — map updates instantly on new GPS insert or clock-out
+  - Loading, error, and empty states handled gracefully
+  - "Updated X ago" timestamp bottom-left of map
 
-### Changed
-- Fonts updated from Syne/DM Sans to Barlow Condensed / Barlow
-- GPS capture refactored into `startGPS` / `stopGPS` with ref-based timer management
-- Clock-in immediately returns to home screen after action — reduces accidental double-taps
-- Map default center set to Orlando area (28.5, -81.3)
-- localStorage keys versioned to `v2` — fresh start, no migration from v1
+### Architecture — Hybrid Model
+- **PINs:** localStorage only (unchanged)
+- **Sessions + GPS:** Supabase (shared across devices)
+- Avoids a full rewrite while enabling true real-time multi-device visibility
 
-### Fixed
-- GPS timer leak on component unmount
-- Week total including live time for today's still-open entry
-- Map tile layer not re-rendering after route data update
-- Leaflet loaded once globally via `useLeaflet` hook — prevents duplicate script injection
+### Environment Variables Required
+```
+VITE_SUPABASE_URL=https://xxxx.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJ...
+```
+
+### Integration Notes
+```bash
+npm install @supabase/supabase-js
+```
+```jsx
+// Router
+import LiveMap from './LiveMap';
+<Route path="/manager/map" element={<LiveMap />} />
+
+// Replace localStorage clock-in with:
+import { clockIn, recordGpsPoint, clockOut } from './lib/supabase';
+```
+
+### Files Changed
+| File | Change |
+|---|---|
+| `supabase/schema.sql` | New — run once in Supabase SQL Editor |
+| `src/lib/supabase.js` | New — Supabase client + all helper functions |
+| `src/LiveMap.jsx` | New — manager live map component |
+| `CHANGELOG.md` | Updated |
 
 ---
 
-## [1.8.0]
+## [1.1] — Help Screen — 2026-03-18
 
 ### Added
-- Leaflet map integration in tech view — shows today's GPS trail
-- Live position broadcasting to manager map
-
-### Changed
-- GPS stored per-day within week data structure
-- Map renders only after Leaflet script confirmed loaded
+- **In-app Help Screen** (`src/HelpScreen.jsx`) — tabbed React component covering all 7 features
+- Technician Tab: PWA install, PIN setup, clock in/out, GPS tracking, offline mode
+- Manager Tab: dashboard, live map, CSV export, PIN management, offline behaviour
+- Quick Reference Cards, collapsible accordion sections, tip/info callout boxes
+- Dark theme; Syne + DM Sans fonts
 
 ---
 
-## [1.7.0]
+## [1.0] — Initial Release
 
 ### Added
-- Manager dashboard — full week view for all 12 technicians
-- CSV export from manager view
-- Week submission unlock from manager
-
-### Changed
-- Manager access gated behind PIN (default: 1234)
+- PWA scaffold (Vite + React 18)
+- 4-digit PIN authentication (localStorage)
+- Clock in / clock out with session timer
+- GPS route tracking via Leaflet
+- Manager dashboard
+- CSV export
+- Offline support via service worker
+- GitHub Actions → GitHub Pages deploy pipeline
+- `public/manifest.json` + `public/service-worker.js`
 
 ---
 
-## [1.6.0]
-
-### Added
-- GPS tracking on clock-in, stops on clock-out
-- GPS points stored per entry with lat/lng/accuracy/timestamp
-
-### Changed
-- GPS uses `getCurrentPosition` polling rather than `watchPosition` for battery efficiency
-
----
-
-## [1.5.0]
-
-### Added
-- Week submission flow with confirmation step
-- Submitted state persisted — prevents further edits without manager unlock
-- Overtime warning at 40+ hours
-
----
-
-## [1.4.0]
-
-### Added
-- Day flag system — techs or manager can flag a day for review
-- Flag indicator (🚩) visible on home screen roster and manager list
-- Multiple clock-in/out entries per day supported
-
-### Changed
-- Daily total recalculates from all entries on each update
-
----
-
-## [1.3.0]
-
-### Added
-- PIN system for all 12 technicians
-- First-time PIN setup flow on first tech login
-- PIN verification on subsequent logins
-- Manager PIN separate from tech PINs
-
----
-
-## [1.2.0]
-
-### Added
-- Week view in tech screen — hours per day for current week
-- Week total displayed with hours and H:M format
-- Week key based on Sunday start date
-
-### Changed
-- Data keyed by week start date — supports historical data retention
-
----
-
-## [1.1.0]
-
-### Added
-- Initial build — home screen roster for 12 technicians
-- Clock in / clock out with timestamp
-- Live elapsed time counter (updates every second)
-- Daily total accumulation across multiple sessions
-- Data persisted to localStorage
-- Dark industrial UI with CSS custom properties
+*Versioning follows feature milestones.*
