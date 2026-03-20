@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { supabase } from './lib/supabase';
 
 const GlobalStyle = () => (
   <style>{`
@@ -40,7 +41,6 @@ function loadTechs() { try { return JSON.parse(localStorage.getItem("pool_techs_
 function saveTechs(t) { try { localStorage.setItem("pool_techs_v2", JSON.stringify(t)); } catch {} }
 const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const FULL_DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
-const MANAGER_PIN_KEY = "pool_mgr_pin";
 const DEFAULT_MANAGER_PIN = "1234";
 const SAMPLE_RATES = [
   { label: "30 sec", value: 30000 },
@@ -112,7 +112,7 @@ function Logo({ size = "lg" }) {
 }
 
 // ── PIN Pad ───────────────────────────────────────────────────────────────────
-function PinPad({ title, subtitle, onSuccess, onCancel, checkPin, allowSkip = false, resetKey }) {
+function PinPad({ title, subtitle, onSuccess, onCancel, checkPin, resetKey }) {
   const [digits, setDigits] = useState([]);
   const [shake, setShake] = useState(false);
   const [hint, setHint] = useState("");
@@ -149,12 +149,7 @@ function PinPad({ title, subtitle, onSuccess, onCancel, checkPin, allowSkip = fa
       <Logo size="lg" />
       <div style={{ marginTop:16, fontFamily:"var(--font-head)", fontSize:20, fontWeight:700, color:"var(--water)", letterSpacing:1, marginBottom:4 }}>{title}</div>
       {subtitle && <div style={{ color:"var(--text-dim)", fontSize:14, marginBottom:28, textAlign:"center" }}>{subtitle}</div>}
-
-      {/* Dots */}
-      <div style={{
-        display:"flex", gap:16, marginBottom:8,
-        animation: shake ? "shake 0.4s ease" : "none"
-      }}>
+      <div style={{ display:"flex", gap:16, marginBottom:8, animation: shake ? "shake 0.4s ease" : "none" }}>
         {[0,1,2,3].map(i => (
           <div key={i} style={{
             width:18, height:18, borderRadius:"50%",
@@ -166,8 +161,6 @@ function PinPad({ title, subtitle, onSuccess, onCancel, checkPin, allowSkip = fa
         ))}
       </div>
       <div style={{ height:20, color:"var(--red)", fontSize:13, fontFamily:"var(--font-head)", fontWeight:700, letterSpacing:1, marginBottom:16 }}>{hint}</div>
-
-      {/* Keypad */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, width:240 }}>
         {[1,2,3,4,5,6,7,8,9].map(n => (
           <button key={n} onClick={() => press(String(n))} style={{
@@ -199,7 +192,7 @@ function PinPad({ title, subtitle, onSuccess, onCancel, checkPin, allowSkip = fa
 
 // ── Set PIN flow ──────────────────────────────────────────────────────────────
 function SetPinFlow({ title, onSet, onCancel }) {
-  const [step, setStep] = useState("set"); // set | confirm
+  const [step, setStep] = useState("set");
   const [first, setFirst] = useState("");
 
   if (step === "set") return (
@@ -217,9 +210,7 @@ function SetPinFlow({ title, onSet, onCancel }) {
     <PinPad
       title="Confirm PIN"
       subtitle="Enter your PIN again"
-      onSuccess={(pin) => {
-        if (pin === first) onSet(pin);
-      }}
+      onSuccess={(pin) => { if (pin === first) onSet(pin); }}
       onCancel={() => setStep("set")}
       checkPin={(pin) => pin === first}
       resetKey="confirm"
@@ -228,11 +219,10 @@ function SetPinFlow({ title, onSet, onCancel }) {
 }
 
 // ── Leaflet Map ───────────────────────────────────────────────────────────────
-function LeafletMap({ points = [], techColors = {}, livePositions = {}, height = 300, playbackTech = null, playbackDay = null, allTechsMode = false }) {
+function LeafletMap({ points = [], techColors = {}, livePositions = {}, height = 300, playbackTech = null, allTechsMode = false }) {
   const mapRef = useRef(null);
   const instanceRef = useRef(null);
   const layersRef = useRef([]);
-  const markersRef = useRef({});
 
   useEffect(() => {
     if (!window.L) return;
@@ -242,13 +232,11 @@ function LeafletMap({ points = [], techColors = {}, livePositions = {}, height =
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(instanceRef.current);
     }
     const map = instanceRef.current;
-    // Clear old layers
     layersRef.current.forEach(l => map.removeLayer(l));
     layersRef.current = [];
 
     const allCoords = [];
 
-    // Draw routes
     if (points.length > 0) {
       const color = techColors[playbackTech] || "#0ea5e9";
       const coords = points.map(p => [p.lat, p.lng]);
@@ -265,7 +253,6 @@ function LeafletMap({ points = [], techColors = {}, livePositions = {}, height =
       });
     }
 
-    // Live positions for all-techs mode
     Object.entries(livePositions).forEach(([tech, pos]) => {
       if (!pos) return;
       const color = techColors[tech] || "#0ea5e9";
@@ -337,7 +324,6 @@ export default function App() {
   const persistPins = useCallback((next) => { setPins(next); savePins(next); }, []);
   const persistSettings = useCallback((next) => { setSettings(next); saveSettings(next); }, []);
 
-  // Tech colors map
   const techColors = {};
   techs.forEach((t,i) => techColors[t] = TECH_COLORS[i % TECH_COLORS.length]);
 
@@ -347,7 +333,21 @@ export default function App() {
     function capture() {
       navigator.geolocation.getCurrentPosition(pos => {
         const pt = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, ts: new Date().toISOString() };
+
+        // Update local state
         setLivePositions(lp => ({ ...lp, [tech]: pt }));
+
+        // Sync to Supabase for cross-device live map
+        supabase.from("gps_points").insert({
+          technician_id: tech,
+          session_id: null,
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy_m: pos.coords.accuracy,
+          recorded_at: new Date().toISOString(),
+        }).then(({ error }) => { if (error) console.warn("GPS sync:", error.message); });
+
+        // Save to localStorage
         setData(prev => {
           const wk = getWeekKey(), day = todayIndex();
           const next = JSON.parse(JSON.stringify(prev));
@@ -379,6 +379,16 @@ export default function App() {
         navigator.geolocation?.getCurrentPosition(pos => {
           const pt = { lat:pos.coords.latitude, lng:pos.coords.longitude, acc:pos.coords.accuracy, ts:new Date().toISOString() };
           setLivePositions(lp => ({...lp,[tech]:pt}));
+
+          supabase.from("gps_points").insert({
+            technician_id: tech,
+            session_id: null,
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy_m: pos.coords.accuracy,
+            recorded_at: new Date().toISOString(),
+          }).then(({ error }) => { if (error) console.warn("GPS sync:", error.message); });
+
           setData(prev => {
             const wk=getWeekKey(),day=todayIndex(),next=JSON.parse(JSON.stringify(prev));
             if(!next[wk]) next[wk]={};
@@ -413,7 +423,6 @@ export default function App() {
       startGPS(tech);
     }
     persist(next);
-    // Lock immediately after action
     setScreen("home");
     setSelectedTech(null);
   }
@@ -494,21 +503,9 @@ export default function App() {
     }
   }
 
-  function onPinVerified() {
-    setSelectedTech(pendingTech);
-    setScreen("tech");
-  }
-
-  function onNewPinSet(pin) {
-    const next={...pins,[pendingTech]:pin};
-    persistPins(next);
-    setSelectedTech(pendingTech);
-    setScreen("tech");
-  }
-
-  function onManagerPinVerified() {
-    setScreen("manager");
-  }
+  function onPinVerified() { setSelectedTech(pendingTech); setScreen("tech"); }
+  function onNewPinSet(pin) { const next={...pins,[pendingTech]:pin}; persistPins(next); setSelectedTech(pendingTech); setScreen("tech"); }
+  function onManagerPinVerified() { setScreen("manager"); }
 
   // ── Screen routing ────────────────────────────────────────────────────────
   if (screen==="pin_verify") return <><GlobalStyle/><PinPad
@@ -686,12 +683,9 @@ function TechView({ tech, data, now, isClockedIn, liveMs, weekTotalMs, livePos, 
 
       <div style={{padding:"24px 20px 16px",display:"flex",flexDirection:"column",alignItems:"center",gap:14}}>
         <div style={{color:"var(--text-dim)",fontSize:12,fontFamily:"var(--font-head)",letterSpacing:2,textTransform:"uppercase"}}>{todayName()}</div>
-
         <div style={{fontFamily:"var(--font-head)",fontSize:48,fontWeight:900,letterSpacing:2,color:isClockedIn?color:"var(--text-dim)",animation:isClockedIn?"tick 1s ease-in-out infinite":"none"}}>
           {formatTime(isClockedIn?liveMs:dayMs(today))}
         </div>
-
-        {/* GPS status */}
         <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:livePos?"var(--green)":"var(--text-dim)"}}>
           {livePos
             ? <><span style={{width:8,height:8,borderRadius:"50%",background:"var(--green)",display:"inline-block",animation:"pulse-green 1.5s infinite"}}/> GPS active · {livePos.acc?.toFixed(0)}m accuracy</>
@@ -737,7 +731,6 @@ function TechView({ tech, data, now, isClockedIn, liveMs, weekTotalMs, livePos, 
         )}
       </div>
 
-      {/* Map toggle */}
       {leafletReady && (isClockedIn || todayGps.length>0) && (
         <div style={{padding:"0 16px 12px"}}>
           <button onClick={()=>setShowMap(s=>!s)} style={{
@@ -769,7 +762,6 @@ function TechView({ tech, data, now, isClockedIn, liveMs, weekTotalMs, livePos, 
 
       <div style={{height:1,background:"var(--border)"}}/>
 
-      {/* Week grid */}
       <div style={{padding:"16px 20px",flex:1}}>
         <div style={{fontSize:11,color:"var(--text-dim)",fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:2,marginBottom:10}}>WEEK OVERVIEW</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6}}>
@@ -802,7 +794,6 @@ function TechView({ tech, data, now, isClockedIn, liveMs, weekTotalMs, livePos, 
         <div style={{marginTop:6,fontSize:11,color:"var(--text-dim)",textAlign:"right"}}>Tap day to flag · 📍 = GPS points</div>
       </div>
 
-      {/* Submit */}
       <div style={{padding:"16px 20px",background:"var(--surface2)",borderTop:"1px solid var(--border)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
           <div>
@@ -845,6 +836,29 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
   const [showRoster,setShowRoster]=useState(false);
   const [newTechName,setNewTechName]=useState("");
 
+  // ── Supabase live positions ───────────────────────────────────────────────
+  const [supaPositions, setSupaPositions] = useState({});
+  useEffect(() => {
+    async function fetchLive() {
+      const { data: rows, error } = await supabase
+        .from("gps_points")
+        .select("technician_id, lat, lng, recorded_at")
+        .order("recorded_at", { ascending: false })
+        .limit(200);
+      if (error) { console.warn("Supabase fetch:", error.message); return; }
+      const latest = {};
+      rows.forEach(p => {
+        if (!latest[p.technician_id]) {
+          latest[p.technician_id] = { lat: p.lat, lng: p.lng, ts: p.recorded_at };
+        }
+      });
+      setSupaPositions(latest);
+    }
+    fetchLive();
+    const interval = setInterval(fetchLive, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
   const weeks=[...new Set(Object.keys(data))].sort().reverse();
   if (!weeks.includes(wk)) weeks.unshift(wk);
   const weekData=data[selectedWk]||{};
@@ -854,11 +868,10 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
   const pending=allTechs.filter(t=>!weekData[t]?.submitted&&Object.keys(weekData[t]?.days||{}).length>0);
   const noData=allTechs.filter(t=>!weekData[t]||Object.keys(weekData[t]?.days||{}).length===0);
 
-  // Build live positions map for map view
-  const liveMap={};
-  Object.entries(livePositions).forEach(([t,p])=>{ liveMap[t]=p; });
+  // Use Supabase positions if available, fall back to local livePositions
+  const liveMap = Object.keys(supaPositions).length > 0 ? supaPositions : {};
+  Object.entries(livePositions).forEach(([t,p]) => { if (!liveMap[t]) liveMap[t] = p; });
 
-  // Playback points
   const playbackPoints = playback.tech && playback.day!==null
     ? (data[selectedWk]?.[playback.tech]?.days?.[playback.day]?.gps||[])
     : [];
@@ -893,7 +906,6 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
 
   return (
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",animation:"fadeIn 0.2s ease"}}>
-      {/* Header */}
       <div style={{background:"var(--surface2)",borderBottom:"2px solid var(--water)",padding:"14px 20px",display:"flex",alignItems:"center",gap:12}}>
         <button onClick={onBack} style={{background:"var(--surface3)",color:"var(--text)",borderRadius:8,padding:"6px 12px",fontSize:20}}>‹</button>
         <div style={{flex:1}}>
@@ -902,7 +914,6 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
         <button onClick={exportCSV} style={{background:"var(--water)",color:"#fff",borderRadius:8,padding:"8px 14px",fontFamily:"var(--font-head)",fontWeight:700,fontSize:13,letterSpacing:1}}>↓ CSV</button>
       </div>
 
-      {/* Settings bar */}
       <div style={{background:"var(--surface2)",borderBottom:"1px solid var(--border)",padding:"10px 16px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
         <span style={{fontSize:12,color:"var(--text-dim)",fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:1}}>GPS INTERVAL:</span>
         <div style={{display:"flex",gap:6}}>
@@ -921,7 +932,6 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
         </div>
       </div>
 
-      {/* Roster panel */}
       {showRoster && (
         <div style={{background:"#1e293bcc",borderBottom:"1px solid var(--border)",padding:"12px 16px",animation:"slideUp 0.2s ease"}}>
           <div style={{fontSize:11,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:2,color:"var(--text-dim)",marginBottom:10}}>ROSTER MANAGEMENT</div>
@@ -958,7 +968,6 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
         </div>
       )}
 
-      {/* PIN manager panel */}
       {showPinMgr && (
         <div style={{background:"#1e293bcc",borderBottom:"1px solid var(--border)",padding:"12px 16px",animation:"slideUp 0.2s ease"}}>
           <div style={{fontSize:11,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:2,color:"var(--text-dim)",marginBottom:10}}>PIN MANAGEMENT</div>
@@ -979,7 +988,6 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
         </div>
       )}
 
-      {/* Week selector */}
       <div style={{padding:"10px 16px",background:"var(--surface2)",borderBottom:"1px solid var(--border)",display:"flex",gap:8,overflowX:"auto"}}>
         {weeks.map(w=>(
           <button key={w} onClick={()=>setSelectedWk(w)} style={{padding:"6px 14px",borderRadius:6,whiteSpace:"nowrap",fontSize:13,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:1,background:selectedWk===w?"var(--water)":"var(--surface3)",color:selectedWk===w?"#fff":"var(--text-dim)"}}>
@@ -988,7 +996,6 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
         ))}
       </div>
 
-      {/* Summary cards */}
       <div style={{padding:"12px 16px",display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
         {[{label:"SUBMITTED",val:submitted.length,color:"var(--green)"},{label:"PENDING",val:pending.length,color:"var(--amber)"},{label:"NO DATA",val:noData.length,color:"var(--text-dim)"}].map(({label,val,color})=>(
           <div key={label} style={{background:"var(--surface2)",border:`1px solid ${color}44`,borderRadius:10,padding:"12px 10px",textAlign:"center"}}>
@@ -998,7 +1005,6 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
         ))}
       </div>
 
-      {/* Tab bar */}
       <div style={{display:"flex",borderBottom:"1px solid var(--border)",padding:"0 16px"}}>
         {["list","map"].map(t=>(
           <button key={t} onClick={()=>setTab(t)} style={{
@@ -1009,11 +1015,10 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
         ))}
       </div>
 
-      {/* MAP TAB */}
       {tab==="map" && leafletReady && (
         <div style={{padding:"12px 16px",flex:1}}>
           <div style={{fontSize:11,color:"var(--text-dim)",fontFamily:"var(--font-head)",letterSpacing:1,marginBottom:8}}>
-            LIVE POSITIONS · {Object.keys(livePositions).length} techs broadcasting
+            LIVE POSITIONS · {Object.keys(liveMap).length} techs visible
           </div>
           <LeafletMap
             points={playbackPoints}
@@ -1023,8 +1028,6 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
             height={320}
             allTechsMode={!playback.tech}
           />
-
-          {/* Route playback selector */}
           <div style={{marginTop:12}}>
             <div style={{fontSize:11,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:2,color:"var(--text-dim)",marginBottom:8}}>ROUTE PLAYBACK</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -1057,7 +1060,6 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
         </div>
       )}
 
-      {/* LIST TAB */}
       {tab==="list" && (
         <div style={{flex:1,padding:"0 16px 20px",display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
           {allTechs.map(tech=>{
@@ -1067,7 +1069,7 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
             const hasFlagged=Object.values(td?.days||{}).some(d=>d.flagged);
             const hasAny=total>0;
             const isExpanded=expandedTech===tech;
-            const isLive=!!livePositions[tech];
+            const isLive=!!liveMap[tech];
             const color=techColors[tech];
             return (
               <div key={tech} style={{background:"var(--surface2)",border:`1px solid ${sub?"#22c55e55":hasFlagged?"#f59e0b55":"var(--border)"}`,borderRadius:10,overflow:"hidden"}}>
@@ -1109,7 +1111,6 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
                         );
                       })}
                     </div>
-
                     {Object.entries(td?.days||{}).map(([dayIdx,dayData])=>(
                       <div key={dayIdx} style={{marginBottom:8}}>
                         <div style={{fontSize:11,fontFamily:"var(--font-head)",fontWeight:700,letterSpacing:1,color:"var(--text-dim)",marginBottom:3}}>{FULL_DAYS[dayIdx]}</div>
@@ -1121,7 +1122,6 @@ function ManagerView({ data, now, weekTotalMs, techColors, livePositions, leafle
                         ))}
                       </div>
                     ))}
-
                     <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
                       {sub&&<button onClick={()=>onUnlock(tech,selectedWk)} style={{padding:"7px 14px",borderRadius:8,background:"var(--surface3)",color:"var(--amber)",fontFamily:"var(--font-head)",fontWeight:700,fontSize:13,letterSpacing:1}}>🔓 UNLOCK</button>}
                       <button onClick={()=>{setTab("map");setPlayback({tech,day:todayIndex()});}} style={{padding:"7px 14px",borderRadius:8,background:"var(--surface3)",color:"var(--water)",fontFamily:"var(--font-head)",fontWeight:700,fontSize:13,letterSpacing:1}}>🗺️ VIEW ROUTE</button>
