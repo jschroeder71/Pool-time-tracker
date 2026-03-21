@@ -8,7 +8,7 @@ export default defineConfig({
   // Set this to your GitHub repo name if deploying to GitHub Pages
   // e.g. if your repo is github.com/yourname/pool-time → base: "/pool-time/"
   // If using a custom domain → base: "/"
-  base: "/pool-time/",
+  base: "/Pool-time-tracker/",
 
   build: {
     outDir: "dist",
