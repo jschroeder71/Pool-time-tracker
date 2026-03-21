@@ -12,7 +12,7 @@ export function ManagerScreen({
 }) {
   const wk = getWeekKey();
   const [selWk,        setSelWk]        = useState(wk);
-  const [tab,          setTab]          = useState("list");   // list | map
+  const [tab,          setTab]          = useState("list");
   const [expanded,     setExpanded]     = useState(null);
   const [playback,     setPlayback]     = useState({ tech: null, day: null });
   const [showPins,     setShowPins]     = useState(false);
@@ -20,15 +20,19 @@ export function ManagerScreen({
   const [changeMgrPin, setChangeMgrPin] = useState(false);
   const [gpsRate,      setGpsRateState] = useState(getGPSRate());
 
-  const weeks     = [...new Set([wk, ...Object.keys(appData)])].sort().reverse();
-  const weekData  = appData[selWk] ?? {};
+  const weeks    = [...new Set([wk, ...Object.keys(appData)])].sort().reverse();
+  const weekData = appData[selWk] ?? {};
+
+  // Summary counts still use all TECHS for weekly overview accuracy
   const submitted = TECHS.filter(t => weekData[t]?.submitted);
   const pending   = TECHS.filter(t => !weekData[t]?.submitted && Object.keys(weekData[t]?.days ?? {}).length > 0);
   const noData    = TECHS.filter(t => !weekData[t] || !Object.keys(weekData[t]?.days ?? {}).length);
 
+  // List tab: only show techs currently clocked in (have a live GPS position)
+  const clockedInTechs = TECHS.filter(t => !!livePos[t]);
+
   function updateGPSRate(ms) {
     setGPSRate(ms); setGpsRateState(ms);
-    // Notify GPS hook (handled via custom event)
     window.dispatchEvent(new CustomEvent("pool_gps_rate", { detail: ms }));
   }
 
@@ -46,7 +50,6 @@ export function ManagerScreen({
     a.click();
   }
 
-  // PIN reset flows
   if (changeMgrPin) return (
     <><GlobalStyle /><PinScreen title="New Manager PIN" mode="set" onSuccess={(p) => { onChangeMgrPin(p); setChangeMgrPin(false); }} onCancel={() => setChangeMgrPin(false)} /></>
   );
@@ -54,7 +57,6 @@ export function ManagerScreen({
     <><GlobalStyle /><PinScreen title={`Reset: ${resetTech}`} mode="set" onSuccess={(p) => { onResetPin(resetTech, p); setResetTech(null); }} onCancel={() => setResetTech(null)} /></>
   );
 
-  // Playback points
   const pbPoints = playback.tech && playback.day !== null
     ? (appData[selWk]?.[playback.tech]?.days?.[playback.day]?.gps ?? [])
     : [];
@@ -148,7 +150,7 @@ export function ManagerScreen({
           ))}
         </div>
 
-        {/* Summary */}
+        {/* Summary — always shows all techs for weekly accuracy */}
         <div style={{ padding: "12px 16px", display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
           {[
             { label: "Submitted", val: submitted.length, color: "var(--green)" },
@@ -164,7 +166,7 @@ export function ManagerScreen({
 
         {/* Tabs */}
         <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
-          {[["list","👥 Techs"],["map","🗺️ Live Map"]].map(([t, label]) => (
+          {[["list","👥 Live Techs"],["map","🗺️ Live Map"]].map(([t, label]) => (
             <button key={t} onClick={() => setTab(t)} style={{
               flex: 1, padding: "10px", background: "transparent",
               fontFamily: "var(--font-h)", fontWeight: 700, fontSize: 13,
@@ -187,7 +189,6 @@ export function ManagerScreen({
               height={300}
               playTech={playback.tech}
             />
-            {/* Playback controls */}
             <div>
               <SectionLabel>Route Playback</SectionLabel>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -226,98 +227,105 @@ export function ManagerScreen({
           </div>
         )}
 
-        {/* LIST TAB */}
+        {/* LIST TAB — clocked-in techs only */}
         {tab === "list" && (
           <div style={{ flex: 1, padding: "0 16px 20px", display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
-            {TECHS.map(tech => {
-              const td       = weekData[tech];
-              const total    = weekTotalMs(tech, selWk);
-              const sub      = td?.submitted;
-              const flagged  = Object.values(td?.days ?? {}).some(d => d.flagged);
-              const hasData  = total > 0;
-              const isLive   = !!livePos[tech];
-              const isExp    = expanded === tech;
-              const color    = techColors[tech];
 
-              return (
-                <Card key={tech} style={{ border: `1px solid ${sub ? "#3fb95044" : flagged ? "#d2992244" : "var(--border)"}` }}>
-                  <button onClick={() => setExpanded(isExp ? null : tech)} style={{
-                    width: "100%", padding: "12px 14px", background: "transparent",
-                    color: "var(--text)", display: "flex", alignItems: "center", gap: 10,
-                  }}>
-                    <Avatar tech={tech} color={color} size={34} />
-                    <div style={{ flex: 1, textAlign: "left" }}>
-                      <div style={{ fontWeight: 600, fontSize: 15, display: "flex", alignItems: "center", gap: 7 }}>
-                        {tech} {isLive && <LiveDot size={7} />}
-                      </div>
-                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                        {sub ? `✓ ${td.submittedAt ? new Date(td.submittedAt).toLocaleDateString() : "Submitted"}` : hasData ? "Not submitted" : "No entries"}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right", marginRight: 8 }}>
-                      <div style={{ fontFamily: "var(--font-h)", fontWeight: 800, fontSize: 20 }}>{formatHours(total)}</div>
-                      <div style={{ fontSize: 10, color: "var(--muted)" }}>hrs</div>
-                    </div>
-                    {flagged && <span style={{ fontSize: 13 }}>🚩</span>}
-                    <span style={{ color: "var(--muted)" }}>{isExp ? "▲" : "▼"}</span>
-                  </button>
+            {clockedInTechs.length === 0 ? (
+              <div style={{
+                textAlign: "center", padding: "48px 24px",
+                color: "var(--muted)", fontFamily: "var(--font-h)", fontWeight: 700,
+                fontSize: 15, letterSpacing: 0.5,
+              }}>
+                <div style={{ fontSize: 32, marginBottom: 12 }}>🏊</div>
+                No techs currently on the clock
+              </div>
+            ) : (
+              clockedInTechs.map(tech => {
+                const td      = weekData[tech];
+                const total   = weekTotalMs(tech, selWk);
+                const sub     = td?.submitted;
+                const flagged = Object.values(td?.days ?? {}).some(d => d.flagged);
+                const isExp   = expanded === tech;
+                const color   = techColors[tech];
 
-                  {isExp && (
-                    <div style={{ borderTop: "1px solid var(--border)", padding: "10px 14px" }}>
-                      {/* Day grid */}
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 6, marginBottom: 12 }}>
-                        {[1,2,3,4,5,6,0].map(d => {
-                          const dms      = td?.days?.[d]?.totalMs ?? 0;
-                          const dflagged = td?.days?.[d]?.flagged;
-                          const gps      = td?.days?.[d]?.gps?.length ?? 0;
-                          return (
-                            <div key={d} style={{
-                              background: dflagged ? hexAlpha("var(--amber)", 0.1) : "var(--ink3)",
-                              border: `1px solid ${dflagged ? "#d2992244" : "transparent"}`,
-                              borderRadius: 8, padding: "7px 4px", textAlign: "center",
-                            }}>
-                              <div style={{ fontSize: 10, fontFamily: "var(--font-h)", fontWeight: 700, color: "var(--muted)", letterSpacing: 1 }}>{DAYS[d]}</div>
-                              <div style={{ fontFamily: "var(--font-h)", fontWeight: 700, fontSize: 13, marginTop: 4 }}>{dms > 0 ? `${(dms/3_600_000).toFixed(1)}h` : "--"}</div>
-                              {gps > 0 && <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2 }}>📍{gps}</div>}
-                              {dflagged && <div style={{ fontSize: 10 }}>🚩</div>}
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Entry details */}
-                      {Object.entries(td?.days ?? {}).map(([dayIdx, dd]) => (
-                        <div key={dayIdx} style={{ marginBottom: 8 }}>
-                          <div style={{ fontSize: 11, fontFamily: "var(--font-h)", fontWeight: 700, color: "var(--muted)", marginBottom: 3, letterSpacing: 0.5 }}>{FULL_DAYS[dayIdx]}</div>
-                          {dd.entries?.map((e, i) => (
-                            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "2px 0", color: "var(--muted)" }}>
-                              <span>{formatTS(e.in)} → {e.out ? formatTS(e.out) : "active"}</span>
-                              <span style={{ fontFamily: "var(--font-h)", fontWeight: 700 }}>{e.ms ? formatHM(e.ms) : "live"}</span>
-                            </div>
-                          ))}
+                return (
+                  <Card key={tech} style={{ border: `1px solid ${sub ? "#3fb95044" : flagged ? "#d2992244" : "var(--border)"}` }}>
+                    <button onClick={() => setExpanded(isExp ? null : tech)} style={{
+                      width: "100%", padding: "12px 14px", background: "transparent",
+                      color: "var(--text)", display: "flex", alignItems: "center", gap: 10,
+                    }}>
+                      <Avatar tech={tech} color={color} size={34} clockedIn />
+                      <div style={{ flex: 1, textAlign: "left" }}>
+                        <div style={{ fontWeight: 600, fontSize: 15, display: "flex", alignItems: "center", gap: 7 }}>
+                          {tech} <LiveDot size={7} />
                         </div>
-                      ))}
-
-                      {/* Actions */}
-                      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                        {sub && (
-                          <button onClick={() => onUnlock(tech, selWk)} style={{
-                            padding: "7px 14px", borderRadius: 8, background: "var(--ink3)",
-                            color: "var(--amber)", fontFamily: "var(--font-h)", fontWeight: 700, fontSize: 12,
-                            border: "1px solid #d2992233",
-                          }}>🔓 Unlock</button>
-                        )}
-                        <button onClick={() => { setTab("map"); setPlayback({ tech, day: todayIndex() }); }} style={{
-                          padding: "7px 14px", borderRadius: 8, background: "var(--ink3)",
-                          color: "var(--water)", fontFamily: "var(--font-h)", fontWeight: 700, fontSize: 12,
-                          border: "1px solid #38bdf833",
-                        }}>🗺️ View Route</button>
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                          {sub ? `✓ ${td.submittedAt ? new Date(td.submittedAt).toLocaleDateString() : "Submitted"}` : "On the clock"}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </Card>
-              );
-            })}
+                      <div style={{ textAlign: "right", marginRight: 8 }}>
+                        <div style={{ fontFamily: "var(--font-h)", fontWeight: 800, fontSize: 20 }}>{formatHours(total)}</div>
+                        <div style={{ fontSize: 10, color: "var(--muted)" }}>hrs</div>
+                      </div>
+                      {flagged && <span style={{ fontSize: 13 }}>🚩</span>}
+                      <span style={{ color: "var(--muted)" }}>{isExp ? "▲" : "▼"}</span>
+                    </button>
+
+                    {isExp && (
+                      <div style={{ borderTop: "1px solid var(--border)", padding: "10px 14px" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 6, marginBottom: 12 }}>
+                          {[1,2,3,4,5,6,0].map(d => {
+                            const dms      = td?.days?.[d]?.totalMs ?? 0;
+                            const dflagged = td?.days?.[d]?.flagged;
+                            const gps      = td?.days?.[d]?.gps?.length ?? 0;
+                            return (
+                              <div key={d} style={{
+                                background: dflagged ? hexAlpha("var(--amber)", 0.1) : "var(--ink3)",
+                                border: `1px solid ${dflagged ? "#d2992244" : "transparent"}`,
+                                borderRadius: 8, padding: "7px 4px", textAlign: "center",
+                              }}>
+                                <div style={{ fontSize: 10, fontFamily: "var(--font-h)", fontWeight: 700, color: "var(--muted)", letterSpacing: 1 }}>{DAYS[d]}</div>
+                                <div style={{ fontFamily: "var(--font-h)", fontWeight: 700, fontSize: 13, marginTop: 4 }}>{dms > 0 ? `${(dms/3_600_000).toFixed(1)}h` : "--"}</div>
+                                {gps > 0 && <div style={{ fontSize: 9, color: "var(--muted)", marginTop: 2 }}>📍{gps}</div>}
+                                {dflagged && <div style={{ fontSize: 10 }}>🚩</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {Object.entries(td?.days ?? {}).map(([dayIdx, dd]) => (
+                          <div key={dayIdx} style={{ marginBottom: 8 }}>
+                            <div style={{ fontSize: 11, fontFamily: "var(--font-h)", fontWeight: 700, color: "var(--muted)", marginBottom: 3, letterSpacing: 0.5 }}>{FULL_DAYS[dayIdx]}</div>
+                            {dd.entries?.map((e, i) => (
+                              <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "2px 0", color: "var(--muted)" }}>
+                                <span>{formatTS(e.in)} → {e.out ? formatTS(e.out) : "active"}</span>
+                                <span style={{ fontFamily: "var(--font-h)", fontWeight: 700 }}>{e.ms ? formatHM(e.ms) : "live"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+
+                        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                          {sub && (
+                            <button onClick={() => onUnlock(tech, selWk)} style={{
+                              padding: "7px 14px", borderRadius: 8, background: "var(--ink3)",
+                              color: "var(--amber)", fontFamily: "var(--font-h)", fontWeight: 700, fontSize: 12,
+                              border: "1px solid #d2992233",
+                            }}>🔓 Unlock</button>
+                          )}
+                          <button onClick={() => { setTab("map"); setPlayback({ tech, day: todayIndex() }); }} style={{
+                            padding: "7px 14px", borderRadius: 8, background: "var(--ink3)",
+                            color: "var(--water)", fontFamily: "var(--font-h)", fontWeight: 700, fontSize: 12,
+                            border: "1px solid #38bdf833",
+                          }}>🗺️ View Route</button>
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                );
+              })
+            )}
           </div>
         )}
       </Screen>
