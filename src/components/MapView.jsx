@@ -1,24 +1,43 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatTS } from "../utils";
 
-// Leaflet loaded via index.html <script> tag — no bundle dependency
+// ── Leaflet loader ────────────────────────────────────────────────────────────
+function useLeaflet() {
+  const [ready, setReady] = useState(!!window.L);
+  useEffect(() => {
+    if (window.L) { setReady(true); return; }
+    // CSS
+    const link  = document.createElement("link");
+    link.rel    = "stylesheet";
+    link.href   = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+    document.head.appendChild(link);
+    // JS
+    const script  = document.createElement("script");
+    script.src    = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+    script.onload = () => setReady(true);
+    document.head.appendChild(script);
+  }, []);
+  return ready;
+}
 
+// ── MapView ───────────────────────────────────────────────────────────────────
 export function MapView({ points = [], livePos = {}, techColors = {}, height = 280, playTech = null }) {
-  const elRef  = useRef(null);
-  const mapRef = useRef(null);
+  const leafletReady = useLeaflet();
+  const elRef   = useRef(null);
+  const mapRef  = useRef(null);
   const lyrsRef = useRef([]);
 
-  // Init map once
+  // Init map only once Leaflet is loaded
   useEffect(() => {
-    if (!window.L || mapRef.current) return;
+    if (!leafletReady || !elRef.current || mapRef.current) return;
     mapRef.current = window.L.map(elRef.current, { zoomControl: true, attributionControl: false });
     window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(mapRef.current);
     mapRef.current.setView([28.5, -81.4], 10);
-  }, []);
+  }, [leafletReady]);
 
-  // Update layers when data changes
+  // Update layers when data or readiness changes
   useEffect(() => {
-    if (!window.L || !mapRef.current) return;
+    if (!leafletReady || !window.L || !mapRef.current) return;
     const L   = window.L;
     const map = mapRef.current;
 
@@ -27,7 +46,7 @@ export function MapView({ points = [], livePos = {}, techColors = {}, height = 2
 
     const allCoords = [];
 
-    // Draw route
+    // Route playback
     if (points.length > 1) {
       const color  = techColors[playTech] ?? "#38bdf8";
       const coords = points.map(p => [p.lat, p.lng]);
@@ -73,32 +92,20 @@ export function MapView({ points = [], livePos = {}, techColors = {}, height = 2
     }
 
     setTimeout(() => map.invalidateSize(), 80);
-  }, [points, livePos, techColors, playTech]);
+  }, [leafletReady, points, livePos, techColors, playTech]);
 
   return (
-    <>
-      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-      <div
-        ref={elRef}
-        style={{ height, width: "100%", borderRadius: 12, overflow: "hidden", background: "var(--ink3)" }}
-      />
-    </>
+    <div style={{ position: "relative", height, width: "100%", borderRadius: 12, overflow: "hidden", background: "#21262d" }}>
+      {!leafletReady && (
+        <div style={{
+          position: "absolute", inset: 0, display: "flex",
+          alignItems: "center", justifyContent: "center",
+          color: "#8b949e", fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+        }}>
+          Loading map…
+        </div>
+      )}
+      <div ref={elRef} style={{ height: "100%", width: "100%" }} />
+    </div>
   );
-}
-
-// Dynamically load Leaflet if not already present
-export function useLeaflet() {
-  const [ready, setReady] = require("react").useState(!!window.L);
-  require("react").useEffect(() => {
-    if (window.L) { setReady(true); return; }
-    const link   = document.createElement("link");
-    link.rel     = "stylesheet";
-    link.href    = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
-    document.head.appendChild(link);
-    const script  = document.createElement("script");
-    script.src    = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
-    script.onload = () => setReady(true);
-    document.head.appendChild(script);
-  }, []);
-  return ready;
 }
