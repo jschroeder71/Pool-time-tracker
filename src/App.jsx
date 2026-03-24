@@ -91,6 +91,11 @@ export default function App() {
   });
 
   // ── Actions ────────────────────────────────────────────────────────────────
+  // ── PATCH for App.jsx ─────────────────────────────────────────────────────────
+// Replace the clockToggle function with this version.
+// The only change: setTimeout redirect now only fires on clock OUT (action === "out").
+// On clock IN the tech stays on their TechScreen.
+
   const clockToggle = useCallback((tech) => {
     const wk  = getWeekKey();
     const day = todayIndex();
@@ -105,6 +110,7 @@ export default function App() {
 
       let entry;
       if (last && !last.out) {
+        // ── CLOCK OUT ──
         last.out  = now;
         last.ms   = new Date(last.out) - new Date(last.in);
         dayData.totalMs = dayData.entries.reduce((s, e) => s + (e.ms ?? 0), 0);
@@ -112,6 +118,7 @@ export default function App() {
         stopTracking(tech);
         setLivePos(p => { const n = { ...p }; delete n[tech]; return n; });
       } else {
+        // ── CLOCK IN ──
         entry = { in: now, out: null, ms: 0, action: "in" };
         dayData.entries.push(entry);
         startTracking(tech);
@@ -123,10 +130,20 @@ export default function App() {
       return next;
     });
 
-    // Lock — return to home after action
-    setTimeout(() => { setActiveTech(null); setScreen("home"); }, 300);
-  }, [online, pushEntry, enqueue, startTracking, stopTracking]);
-
+    // Only return to home screen on clock OUT
+    setAppData(prev => {
+      const wk  = getWeekKey();
+      const day = todayIndex();
+      const dd  = prev[wk]?.[tech]?.days?.[day];
+      const last = dd?.entries?.at(-1);
+      if (last && last.out) {
+        // just clocked out — go home
+        setTimeout(() => { setActiveTech(null); setScreen("home"); }, 300);
+      }
+      // clocked in — stay on tech screen, no redirect
+      return prev;
+    });
+  }, [online, pushEntry, enqueue, startTracking, stopTracking] 
   const submitWeek = useCallback((tech) => {
     const wk  = getWeekKey();
     const ts  = new Date().toISOString();
