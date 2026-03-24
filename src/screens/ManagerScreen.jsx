@@ -13,6 +13,7 @@ export function ManagerScreen({
   const wk = getWeekKey();
   const [selWk,        setSelWk]        = useState(wk);
   const [tab,          setTab]          = useState("list");
+  const [showAll,      setShowAll]      = useState(false); // false = live only, true = all techs
   const [expanded,     setExpanded]     = useState(null);
   const [playback,     setPlayback]     = useState({ tech: null, day: null });
   const [showPins,     setShowPins]     = useState(false);
@@ -23,13 +24,12 @@ export function ManagerScreen({
   const weeks    = [...new Set([wk, ...Object.keys(appData)])].sort().reverse();
   const weekData = appData[selWk] ?? {};
 
-  // Summary counts still use all TECHS for weekly overview accuracy
   const submitted = TECHS.filter(t => weekData[t]?.submitted);
   const pending   = TECHS.filter(t => !weekData[t]?.submitted && Object.keys(weekData[t]?.days ?? {}).length > 0);
   const noData    = TECHS.filter(t => !weekData[t] || !Object.keys(weekData[t]?.days ?? {}).length);
 
-  // List tab: only show techs currently clocked in (have a live GPS position)
   const clockedInTechs = TECHS.filter(t => !!livePos[t]);
+  const listTechs      = showAll ? TECHS : clockedInTechs;
 
   function updateGPSRate(ms) {
     setGPSRate(ms); setGpsRateState(ms);
@@ -145,12 +145,12 @@ export function ManagerScreen({
               color: selWk === w ? "#fff" : "var(--muted)",
               border: "1px solid var(--border)",
             }}>
-              {w === wk ? `This week` : w}
+              {w === wk ? "This week" : w}
             </button>
           ))}
         </div>
 
-        {/* Summary — always shows all techs for weekly accuracy */}
+        {/* Summary */}
         <div style={{ padding: "12px 16px", display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
           {[
             { label: "Submitted", val: submitted.length, color: "var(--green)" },
@@ -166,7 +166,7 @@ export function ManagerScreen({
 
         {/* Tabs */}
         <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
-          {[["list","👥 Live Techs"],["map","🗺️ Live Map"]].map(([t, label]) => (
+          {[["list","👥 Techs"],["map","🗺️ Live Map"]].map(([t, label]) => (
             <button key={t} onClick={() => setTab(t)} style={{
               flex: 1, padding: "10px", background: "transparent",
               fontFamily: "var(--font-h)", fontWeight: 700, fontSize: 13,
@@ -227,11 +227,33 @@ export function ManagerScreen({
           </div>
         )}
 
-        {/* LIST TAB — clocked-in techs only */}
+        {/* LIST TAB */}
         {tab === "list" && (
           <div style={{ flex: 1, padding: "0 16px 20px", display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
 
-            {clockedInTechs.length === 0 ? (
+            {/* Live / All toggle */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
+              <button onClick={() => setShowAll(false)} style={{
+                flex: 1, padding: "8px", borderRadius: 8, fontSize: 12,
+                fontFamily: "var(--font-h)", fontWeight: 700,
+                background: !showAll ? "var(--green)" : "var(--ink3)",
+                color: !showAll ? "#fff" : "var(--muted)",
+                border: `1px solid ${!showAll ? "var(--green)" : "var(--border)"}`,
+              }}>
+                🟢 Live only ({clockedInTechs.length})
+              </button>
+              <button onClick={() => setShowAll(true)} style={{
+                flex: 1, padding: "8px", borderRadius: 8, fontSize: 12,
+                fontFamily: "var(--font-h)", fontWeight: 700,
+                background: showAll ? "var(--water)" : "var(--ink3)",
+                color: showAll ? "#fff" : "var(--muted)",
+                border: `1px solid ${showAll ? "var(--water)" : "var(--border)"}`,
+              }}>
+                👥 All techs ({TECHS.length})
+              </button>
+            </div>
+
+            {listTechs.length === 0 ? (
               <div style={{
                 textAlign: "center", padding: "48px 24px",
                 color: "var(--muted)", fontFamily: "var(--font-h)", fontWeight: 700,
@@ -241,11 +263,12 @@ export function ManagerScreen({
                 No techs currently on the clock
               </div>
             ) : (
-              clockedInTechs.map(tech => {
+              listTechs.map(tech => {
                 const td      = weekData[tech];
                 const total   = weekTotalMs(tech, selWk);
                 const sub     = td?.submitted;
                 const flagged = Object.values(td?.days ?? {}).some(d => d.flagged);
+                const isLive  = !!livePos[tech];
                 const isExp   = expanded === tech;
                 const color   = techColors[tech];
 
@@ -255,13 +278,17 @@ export function ManagerScreen({
                       width: "100%", padding: "12px 14px", background: "transparent",
                       color: "var(--text)", display: "flex", alignItems: "center", gap: 10,
                     }}>
-                      <Avatar tech={tech} color={color} size={34} clockedIn />
+                      <Avatar tech={tech} color={color} size={34} clockedIn={isLive} />
                       <div style={{ flex: 1, textAlign: "left" }}>
                         <div style={{ fontWeight: 600, fontSize: 15, display: "flex", alignItems: "center", gap: 7 }}>
-                          {tech} <LiveDot size={7} />
+                          {tech} {isLive && <LiveDot size={7} />}
                         </div>
                         <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                          {sub ? `✓ ${td.submittedAt ? new Date(td.submittedAt).toLocaleDateString() : "Submitted"}` : "On the clock"}
+                          {sub
+                            ? `✓ ${td.submittedAt ? new Date(td.submittedAt).toLocaleDateString() : "Submitted"}`
+                            : isLive ? "On the clock"
+                            : Object.keys(td?.days ?? {}).length > 0 ? "Not submitted"
+                            : "No entries"}
                         </div>
                       </div>
                       <div style={{ textAlign: "right", marginRight: 8 }}>
