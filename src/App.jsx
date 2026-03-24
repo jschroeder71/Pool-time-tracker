@@ -143,7 +143,7 @@ export default function App() {
       // clocked in — stay on tech screen, no redirect
       return prev;
     });
-  }, [online, pushEntry, enqueue, startTracking, stopTracking] 
+  }, [online, pushEntry, enqueue, startTracking, stopTracking] );
   const submitWeek = useCallback((tech) => {
     const wk  = getWeekKey();
     const ts  = new Date().toISOString();
